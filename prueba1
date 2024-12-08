@@ -1,1 +1,166 @@
+import subprocess
+import re
+import socket
+import threading
+    
+def crear_punto_de_Acceso( ssid, password): #esta funcion va a ser la encargada de crear el punto de acceso
+    try:
+        #Al juntar todo el comando para crear el punto de acceso en una lista llamada "instruccion" podemos tener exactitud para no dejar espacios en blanco, etc.
+        instruccion = ["nmcli", "dev", "wifi", "hotspot","ifname", "wlan0","ssid", ssid,"password", password]
+        
+        # Ejecutar el comando a traves de subprocess
+        devuelve = subprocess.run(instruccion, text=True, capture_output=True, check=True)
+        print(f"Punto de acceso creado exitosamente:\n{devuelve.stdout}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error al crear el punto de acceso:\n{e.stderr}")
+    except Exception as ex:
+        print(f"Se produjo un error inesperado: {ex}")
 
+def Detener_Punto_de_Acceso(id): #y esta funcion detiene el punto de acceso con el comando down
+    try:
+        # Comando para detener el pto de acceso
+        instruccion = ["nmcli", "connection", "down", "id", id]
+        # Ejecutar el comando
+        devuelve = subprocess.run(instruccion, text=True, capture_output=True, check=True)
+        eliminar_punto_de_Acceso(id)
+        print(f"Punto de acceso detenido exitosamente:\n{devuelve.stdout}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error al detener el punto de acceso:\n{e.stderr}")
+    except Exception as ex:
+        print(f"Se produjo un error inesperado: {ex}")
+
+
+def eliminar_punto_de_Acceso(id):
+    try:
+        instruccion2 =["nmcli", "connection", "delete", "id", id]
+        devuelve = subprocess.run(instruccion2, text=True, capture_output=True, check=True)
+        print(f"La id para el nuevo punto de acceso se ha reiniciado correctamente:\n{devuelve.stdout}")
+    except subprocess.CalledProcessError as e:
+        print(f"No hay puntos de acceso previos para eliminar (ignorar advertencia de error):\n{e.stderr}")
+    except Exception as ex:
+        print(f"Se produjo un error inesperado: {ex}")
+
+def scan_wifi_names():
+    try:
+        # Ejecutar el comando 'iwlist scan'
+        command = ["sudo", "iwlist", "wlan0", "scan"]
+        result = subprocess.run(command, text=True, capture_output=True, check=True)
+        output = result.stdout
+
+        # Buscar todos los SSID utilizando expresiones regulares
+        ssid_matches = re.findall(r'ESSID:"(.*?)"', output)
+        
+        # Eliminar duplicados manteniendo el orden
+        unique_ssids = list(dict.fromkeys(ssid_matches))
+
+        return unique_ssids
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error al ejecutar iwlist:\n{e.stderr}")
+    except Exception as ex:
+        print(f"Se produjo un error inesperado: {ex}")
+        return []
+    
+def tcp_server():
+    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_socket.bind(("0.0.0.0", 12345)) 
+    tcp_socket.listen(5)
+    print("Servidor TCP en espera de conexiones...")
+
+    while True:
+        conn, addr = tcp_socket.accept()
+        print(f"Conexión TCP desde {addr}")
+        data = conn.recv(1024)
+        if validar_paquete(data, "TCP", addr[0]):
+            conn.sendall(b"Datos recibidos correctamente (TCP)")
+        else:
+            conn.sendall(b"Paquete TCP rechazado por ser invalido.")
+
+        conn.close()
+
+def validar_paquete(datos, protocolo, ip):
+
+    #Valida los requisitos de los protocolos, si no los cumplen se llama el bloquea_ip
+    try:
+        # Ver si hay datos vacíos
+        if not datos:
+            print(f"[{protocolo}] Se ha recibido un paquete vacio.")
+            return False
+        
+        # Confirmar longitud
+        if len(datos) < 20 and protocolo == "TCP":
+            print(f"[{protocolo}] |Advertencia: Paquete TCP invalido, su longitud es menor 20 bytes")
+            bloquear_ip_maliciosa(ip)
+            return False
+        
+        elif len(datos) < 8 and protocolo == "UDP":
+            print(f"[{protocolo}] |Advertencia: Paquete UDP invalido, su longitud es menor a 8 bytes")
+            bloquear_ip_maliciosa(ip)
+            return False
+        
+        # ASCII seguro
+        if not datos.decode(errors="ignore").isascii():
+            print(f"[{protocolo}] |Advertencia: Paquete contiene caracteres no ASCII.")
+            bloquear_ip_maliciosa(ip)
+            return False
+        
+        print(f"[{protocolo}] Exito: Se ha recibido un paquete valido")
+        return True
+
+    except Exception as ex:
+        print(f"[{protocolo}] Error al validar el paquete: {ex}")
+        return False
+
+def udp_server():
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind(("0.0.0.0", 12346))  
+    print("Servidor UDP en espera de mensajes...")
+
+    while True:
+        data, addr = udp_socket.recvfrom(1024)
+        if validar_paquete(data, "UDP",addr[0]):
+            udp_socket.sendto(b"Datos recibidos correctamente (UDP)", addr)
+        else:
+            udp_socket.sendto(b"Paquete UDP rechazado por ser invalido.", addr)
+        
+def bloquear_ip_maliciosa(ip):
+    try:
+        instruccion = ["sudo", "iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
+        subprocess.run(instruccion, check=True)
+        print(f"Dispositivo con ip: {ip} ha sido bloqueado por enviar datos invalidos.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error al bloquear ip: {ip}: {e.stderr}")
+    except Exception as ex:
+        print(f"Se produjo un error inesperado al bloquear ip: {ip}: {ex}")
+
+if __name__ == "__main__": #en el main se piden el nombre y contraseña de la red a crear
+    confirmador = True
+    print("Comenzando escaneo de redes cercanas...")
+    lista_redes = scan_wifi_names()
+    print(f"Resultados: {lista_redes}")
+    while True:
+        Nombre_wifi = input("Ingrese el nombre de la red que se creará como punto de acceso (ssid): ")
+        Contraseña_wifi = input("Ingrese la contraseña del punto de acceso (Largo minimo 8 caracteres): ")
+        if Nombre_wifi in lista_redes:
+            print("Error: El nombre ya existe, intente con otro.")
+        elif len(Contraseña_wifi) < 8:
+            print("Error: La contraseña debe tener al menos 8 caracteres.")
+        else:
+            break
+
+    print("Se está creando el punto de acceso ...")
+    crear_punto_de_Acceso(Nombre_wifi, Contraseña_wifi)
+    tcp_thread = threading.Thread(target=tcp_server, daemon=True)
+    udp_thread = threading.Thread(target=udp_server, daemon=True)
+
+    tcp_thread.start()
+    udp_thread.start()
+
+    print("Servidores TCP y UDP están en ejecución...")
+    try:
+        tcp_thread.join()
+        udp_thread.join()
+
+    except KeyboardInterrupt:
+        print("Servidores detenidos.")
+        Detener_Punto_de_Acceso("Hotspot")
