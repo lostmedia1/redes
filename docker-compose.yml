@@ -1,0 +1,52 @@
+version: '3.8'  
+
+services:
+  app:
+    image: app_redes
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app_redes-container
+    ports:
+      - "12345:12345"  # puerto para TCP
+      - "12346:12346"  # puerto para UDP
+    volumes:
+      - /run/NetworkManager:/run/NetworkManager  # Acceso al socket de NetworkManager
+      - .:/app 
+      - ./logs:/app/logs
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket #Acceso al socket de dbus
+      - /usr/bin/nmcli:/usr/bin/nmcli
+      - /lib/aarch64-linux-gnu/libnm.so.0:/lib/aarch64-linux-gnu/libnm.so.0:ro #dependencia necesaria para que funciones nmcli
+
+    environment:
+      - DATABASE_HOST=localhost
+      - DATABASE_USER=postgres
+      - DATABASE_PASSWORD=brawlstars
+      - DATABASE_NAME=registro_mensajes
+      - SSID=RedRaspberry
+      - CONTRASENA=12345678
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+
+    depends_on:
+      - db              #si no tuvieramos que depender de network_mode = host usariamos este contenedor para la base de datos
+    privileged: true
+    user: root
+    network_mode: host  #tuvimos que usar esto para que funcione iwlist y nmcli
+    cap_add:
+    - NET_RAW
+    - NET_ADMIN
+
+
+
+  db:
+    container_name: app-db-1
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: brawlstars
+      POSTGRES_DB: registro_mensajes
+
+    volumes:
+      - ./BDinicial.sql:/docker-entrypoint-initdb.d/BDinicial.sql
+
+    
